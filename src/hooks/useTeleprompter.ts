@@ -17,17 +17,34 @@ export function useTeleprompter({
   const [lineProgress, setLineProgress] = useState(0);
   const [elapsedTotalMs, setElapsedTotalMs] = useState(0);
 
+  // 발표 시작부터 실제로 흐른 초시계 & 문장별 실제 소요 시간(ms) 기록
+  const [realElapsedMs, setRealElapsedMs] = useState(0);
+  const [lineActualDurationsMs, setLineActualDurationsMs] = useState<Record<number, number>>({});
+  const [isClockRunning, setIsClockRunning] = useState(false);
+
   const lastFrameTimeRef = useRef<number | null>(null);
+  const lastClockTimeRef = useRef<number | null>(null);
   const currentLineElapsedRef = useRef<number>(0);
+  const currentIndexRef = useRef<number>(0);
   const rafIdRef = useRef<number | null>(null);
+  const clockRafIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
 
   const reset = useCallback(() => {
     setIsPlaying(false);
+    setIsClockRunning(false);
     setCurrentIndex(0);
+    currentIndexRef.current = 0;
     setLineProgress(0);
     setElapsedTotalMs(0);
+    setRealElapsedMs(0);
+    setLineActualDurationsMs({});
     currentLineElapsedRef.current = 0;
     lastFrameTimeRef.current = null;
+    lastClockTimeRef.current = null;
   }, []);
 
   const jumpToLine = useCallback(
@@ -35,6 +52,7 @@ export function useTeleprompter({
       if (flatLines.length === 0) return;
       const clamped = Math.max(0, Math.min(targetIndex, flatLines.length - 1));
       setCurrentIndex(clamped);
+      currentIndexRef.current = clamped;
       setLineProgress(0);
       currentLineElapsedRef.current = 0;
       lastFrameTimeRef.current = performance.now();
@@ -47,13 +65,11 @@ export function useTeleprompter({
     [flatLines]
   );
 
-  // 다음 문장(줄)으로 이동
   const jumpToNextLine = useCallback(() => {
     if (flatLines.length === 0) return;
     jumpToLine(currentIndex + 1);
   }, [flatLines.length, currentIndex, jumpToLine]);
 
-  // 이전 문장(줄)으로 이동 (현재 문장을 1초 이상 읽었으면 현재 문장 처음으로, 아니면 직전 문장으로)
   const jumpToPrevLine = useCallback(() => {
     if (flatLines.length === 0) return;
     if (currentLineElapsedRef.current > 1000) {
@@ -63,7 +79,6 @@ export function useTeleprompter({
     jumpToLine(currentIndex - 1);
   }, [flatLines.length, currentIndex, jumpToLine]);
 
-  // 다음 문단 첫 줄로 이동
   const jumpToNextParagraph = useCallback(() => {
     if (flatLines.length === 0) return;
     const currentParaIdx = flatLines[currentIndex]?.paragraphIndex ?? 0;
@@ -77,7 +92,6 @@ export function useTeleprompter({
     }
   }, [flatLines, currentIndex, jumpToLine]);
 
-  // 이전 문단 첫 줄로 이동
   const jumpToPrevParagraph = useCallback(() => {
     if (flatLines.length === 0) return;
     const currentLine = flatLines[currentIndex];
@@ -96,6 +110,45 @@ export function useTeleprompter({
     jumpToLine(prevParaStart !== -1 ? prevParaStart : 0);
   }, [flatLines, currentIndex, jumpToLine]);
 
+  // 재생 시작 시 전체 초시계도 함께 가동
+  useEffect(() => {
+    if (isPlaying) {
+      setIsClockRunning(true);
+    }
+  }, [isPlaying]);
+
+  // 독립 초시계 루프 (슬라이드 모드에서 0초가 되어 스크롤이 멈춰도 실제 시간은 계속 측정)
+  useEffect(() => {
+    if (!isClockRunning || flatLines.length === 0) {
+      lastClockTimeRef.current = null;
+      if (clockRafIdRef.current) cancelAnimationFrame(clockRafIdRef.current);
+      return;
+    }
+
+    const clockTick = (now: number) => {
+      if (lastClockTimeRef.current === null) {
+        lastClockTimeRef.current = now;
+      }
+      const deltaMs = now - lastClockTimeRef.current;
+      lastClockTimeRef.current = now;
+
+      const activeIdx = currentIndexRef.current;
+      setRealElapsedMs((prev) => prev + deltaMs);
+      setLineActualDurationsMs((prev) => ({
+        ...prev,
+        [activeIdx]: (prev[activeIdx] ?? 0) + deltaMs,
+      }));
+
+      clockRafIdRef.current = requestAnimationFrame(clockTick);
+    };
+
+    clockRafIdRef.current = requestAnimationFrame(clockTick);
+    return () => {
+      if (clockRafIdRef.current) cancelAnimationFrame(clockRafIdRef.current);
+    };
+  }, [isClockRunning, flatLines.length]);
+
+  // 스크롤 진행 루프
   useEffect(() => {
     if (!isPlaying || flatLines.length === 0) {
       lastFrameTimeRef.current = null;
@@ -113,6 +166,7 @@ export function useTeleprompter({
       const activeLine = flatLines[currentIndex];
       if (!activeLine) {
         setIsPlaying(false);
+        setIsClockRunning(false);
         return;
       }
 
@@ -121,7 +175,7 @@ export function useTeleprompter({
       setElapsedTotalMs((prev) => prev + deltaMs);
 
       if (currentLineElapsedRef.current >= targetDuration) {
-        // 슬라이드 제어 모드: 문장 끝까지 부드럽게 흐른 뒤, 마지막 위치(lineProgress = 1)에 고정된 채 정지
+        // 슬라이드 제어 모드: 문장 끝에 도달하면 정지(초시계는 계속 흐름)
         if (controlMode === 'slide') {
           currentLineElapsedRef.current = targetDuration;
           setLineProgress(1);
@@ -133,11 +187,11 @@ export function useTeleprompter({
         if (nextIdx >= flatLines.length) {
           setLineProgress(1);
           setIsPlaying(false);
+          setIsClockRunning(false);
           onFinish?.();
           return;
         }
 
-        // 연속 스크롤 모드: 자연스럽게 다음 줄로 이어서 스크롤
         const overflowMs = currentLineElapsedRef.current - targetDuration;
         setCurrentIndex(nextIdx);
         currentLineElapsedRef.current = overflowMs;
@@ -158,7 +212,11 @@ export function useTeleprompter({
   }, [isPlaying, currentIndex, flatLines, controlMode, onFinish]);
 
   const togglePlay = useCallback(() => {
-    setIsPlaying((prev) => !prev);
+    setIsPlaying((prev) => {
+      const next = !prev;
+      setIsClockRunning(next);
+      return next;
+    });
   }, []);
 
   return {
@@ -168,6 +226,8 @@ export function useTeleprompter({
     currentIndex,
     lineProgress,
     elapsedTotalMs,
+    realElapsedMs,
+    lineActualDurationsMs,
     reset,
     jumpToLine,
     jumpToNextLine,
