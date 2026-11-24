@@ -121,20 +121,18 @@ export function useTeleprompter({
       setElapsedTotalMs((prev) => prev + deltaMs);
 
       if (currentLineElapsedRef.current >= targetDuration) {
+        // 슬라이드 제어 모드: 시간이 다 되어도 다음 줄로 넘어가지 않고 현재 문장 위치에 고정된 채 대기
+        if (controlMode === 'slide') {
+          setLineProgress(0); // 문장 위치가 아래로 밀리지 않도록 기준선에 정위치 고정
+          setIsPlaying(false); // 0초 상태로 멈춰서 다음 펜슬 클릭 대기
+          return;
+        }
+
         const nextIdx = currentIndex + 1;
         if (nextIdx >= flatLines.length) {
           setLineProgress(1);
           setIsPlaying(false);
           onFinish?.();
-          return;
-        }
-
-        // 슬라이드 제어 모드: 한 문장(줄) 시간이 다 되면 다음 문장 위치에 맞춰 대기
-        if (controlMode === 'slide') {
-          setCurrentIndex(nextIdx);
-          setLineProgress(0);
-          currentLineElapsedRef.current = 0;
-          setIsPlaying(false);
           return;
         }
 
