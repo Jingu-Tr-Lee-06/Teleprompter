@@ -12,6 +12,9 @@ import {
   ChevronLeft,
   ChevronRight,
   EyeOff,
+  Timer,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { ParsedScriptResult, PrompterConfig } from '@/types/script';
 import { useTeleprompter } from '@/hooks/useTeleprompter';
@@ -31,6 +34,21 @@ function formatClock(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function formatStopwatch(ms: number): string {
+  const totalTenths = Math.floor(Math.max(0, ms) / 100);
+  const m = Math.floor(totalTenths / 600);
+  const s = Math.floor((totalTenths % 600) / 10);
+  const d = totalTenths % 10;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
+}
+
+function formatDiffSec(diffMs: number): string {
+  const sec = diffMs / 1000;
+  if (Math.abs(sec) < 0.05) return '0.0s';
+  const sign = sec > 0 ? '+' : '';
+  return `${sign}${sec.toFixed(1)}s`;
+}
+
 export function PrompterView({
   parsed,
   config,
@@ -38,7 +56,9 @@ export function PrompterView({
   onExit,
 }: PrompterViewProps) {
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const tableRowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
   const [translateY, setTranslateY] = useState(0);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const {
     isPlaying,
@@ -47,6 +67,8 @@ export function PrompterView({
     currentIndex,
     lineProgress,
     elapsedTotalMs,
+    realElapsedMs,
+    lineActualDurationsMs,
     reset,
     jumpToLine,
     jumpToNextLine,
@@ -74,8 +96,7 @@ export function PrompterView({
     onExitPrompter: onExit,
   });
 
-  // 현재 줄의 실제 픽셀 높이와 진행률(lineProgress: 0 -> 1)에 따라 부드럽게 스크롤 이동
-  // slide 모드에서 lineProgress가 1에 도달해 멈추면 현재 문장 마지막 위치에 그대로 고정됨
+  // 현재 줄의 실제 픽셀 높이와 진행률(lineProgress: 0 -> 1)에 따라 스크롤 이동
   useEffect(() => {
     const activeEl = lineRefs.current[currentIndex];
     if (!activeEl) return;
@@ -86,17 +107,23 @@ export function PrompterView({
     setTranslateY(-smoothOffset);
   }, [currentIndex, lineProgress, config.fontSizePx, parsed.flatLines]);
 
+  // 좌측 시간 분석 테이블의 현재 행이 항상 보이도록 자동 스크롤
+  useEffect(() => {
+    const rowEl = tableRowRefs.current[currentIndex];
+    if (rowEl && isSidebarOpen) {
+      rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [currentIndex, isSidebarOpen]);
+
   const activeLine = parsed.flatLines[currentIndex];
   const remainingTotalMs = Math.max(0, parsed.totalCalculatedMs - elapsedTotalMs);
 
-  // 현재 문장(줄)의 남은 초 (lineProgress가 1에 도달하면 정확히 0 표시)
   const currentLineRemainingSec = useMemo(() => {
     if (!activeLine) return 0;
     const remMs = activeLine.durationMs * (1 - lineProgress);
     return Math.max(0, Math.ceil(remMs / 1000));
   }, [activeLine, lineProgress]);
 
-  // 현재 문단의 남은 시간 계산
   const currentParagraphRemainingMs = useMemo(() => {
     if (!activeLine) return 0;
     const paraLines = parsed.flatLines.filter(
@@ -110,7 +137,17 @@ export function PrompterView({
     return currentLineRem + followingLinesRem;
   }, [activeLine, lineProgress, parsed.flatLines]);
 
-  // 블랙스크린(암전) 모드 렌더링
+  const totalPaceDiffMs = useMemo(() => {
+    let diff = 0;
+    parsed.flatLines.forEach((line, idx) => {
+      const actual = lineActualDurationsMs[idx];
+      if (actual !== undefined) {
+        diff += actual - line.durationMs;
+      }
+    });
+    return diff;
+  }, [parsed.flatLines, lineActualDurationsMs]);
+
   if (isBlackout) {
     return (
       <div
@@ -126,9 +163,22 @@ export function PrompterView({
 
   return (
     <div className="fixed inset-0 bg-black text-white z-50 overflow-hidden select-none flex flex-col">
-      {/* 상단 HUD 컨트롤 바 */}
-      <div className="relative z-30 flex items-center justify-between px-6 py-3 bg-zinc-950/90 border-b border-zinc-900 opacity-30 hover:opacity-100 transition-opacity duration-200">
-        <div className="flex items-center gap-3">
+      {/* 상단 HUD 컨트롤 바 (z-50 최상단 고정) */}
+      <div className="relative z-50 flex items-center justify-between px-4 py-3 bg-zinc-950 border-b border-zinc-800">
+        <div className="flex items-center gap-2.5">
+          {/* 좌측 초시계 테이블 열기/닫기 버튼 */}
+          <button
+            onClick={() => setIsSidebarOpen((prev) => !prev)}
+            className="p-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 rounded-md cursor-pointer border border-zinc-800"
+            title={isSidebarOpen ? '초시계 패널 숨기기' : '초시계 패널 보기'}
+          >
+            {isSidebarOpen ? (
+              <PanelLeftClose className="w-4 h-4" />
+            ) : (
+              <PanelLeftOpen className="w-4 h-4" />
+            )}
+          </button>
+
           <button
             onClick={togglePlay}
             className="flex items-center gap-1.5 bg-white text-black font-bold px-3.5 py-1.5 rounded-md text-sm cursor-pointer"
@@ -147,7 +197,6 @@ export function PrompterView({
 
           <div className="h-4 w-px bg-zinc-800 mx-1" />
 
-          {/* 문단 이동 버튼 */}
           <button
             onClick={jumpToPrevParagraph}
             className="p-1.5 text-zinc-400 hover:text-white cursor-pointer"
@@ -235,60 +284,157 @@ export function PrompterView({
         </div>
       </div>
 
-      {/* 우측 상단 현재 문장 남은 초 대형 카운트다운 (숫자만 표기) */}
-      <div className="pointer-events-none fixed top-20 right-10 z-25">
-        <span className="text-white font-extrabold text-7xl md:text-8xl leading-none tracking-tight tabular-nums drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
-          {currentLineRemainingSec}
-        </span>
-      </div>
-
-      {/* 시선 고정 가이드라인 (화면 상단 35% 위치 기준선) */}
-      <div className="pointer-events-none fixed inset-x-0 top-[35%] z-20 flex items-center justify-between px-4">
-        <div className="w-3 h-3 border-t-2 border-r-2 border-emerald-500 rotate-45" />
-        <div className="flex-1 border-t border-dashed border-zinc-800/80 mx-3" />
-        <div className="w-3 h-3 border-t-2 border-l-2 border-emerald-500 -rotate-45" />
-      </div>
-
-      {/* 본문 스크롤 스테이지 */}
-      <div
-        className={`relative flex-1 w-full max-w-5xl mx-auto px-8 ${
-          config.isMirrored ? 'scale-x-[-1]' : ''
-        }`}
-      >
-        <div
-          style={{
-            transform: `translate3d(0, calc(35vh + ${translateY}px), 0)`,
-            fontSize: `${config.fontSizePx}px`,
-            lineHeight: config.lineHeight,
-          }}
-          className="will-change-transform transition-none"
-        >
-          {parsed.flatLines.map((line, idx) => {
-            const isCurrent = idx === currentIndex;
-            const isPast = idx < currentIndex;
-            const isNewParagraph = idx > 0 && line.lineIndexInParagraph === 0;
-
-            return (
-              <div
-                key={line.id}
-                ref={(el) => {
-                  lineRefs.current[idx] = el;
-                }}
-                onClick={() => jumpToLine(idx)}
-                className={`cursor-pointer transition-opacity duration-200 break-keep font-bold tracking-tight ${
-                  isNewParagraph ? 'mt-[1.4em]' : 'mt-[0.35em]'
-                } ${
-                  isCurrent
-                    ? 'text-white opacity-100'
-                    : isPast
-                    ? 'text-zinc-500 opacity-30'
-                    : 'text-zinc-200 opacity-50 hover:opacity-80'
-                }`}
-              >
-                {line.text}
+      {/* 메인 바디 영역 (좌측 초시계 패널 + 우측 본문 스테이지) */}
+      <div className="relative flex-1 flex overflow-hidden">
+        {/* 좌측 패널: 발표 초시계 & 문장별 계획 대비 증감 시간 테이블 (z-40) */}
+        {isSidebarOpen && (
+          <aside className="relative z-40 w-72 shrink-0 h-full bg-zinc-950 border-r border-zinc-800 flex flex-col">
+            {/* 상단 초시계 영역 */}
+            <div className="p-4 border-b border-zinc-800 bg-zinc-900/80">
+              <div className="flex items-center justify-between text-xs text-zinc-400 mb-1">
+                <span className="flex items-center gap-1.5 font-medium text-zinc-300">
+                  <Timer className="w-4 h-4 text-emerald-400" />
+                  발표 경과 초시계
+                </span>
+                <span
+                  className={`font-mono font-bold ${
+                    totalPaceDiffMs > 500
+                      ? 'text-rose-400'
+                      : totalPaceDiffMs < -500
+                      ? 'text-sky-400'
+                      : 'text-zinc-400'
+                  }`}
+                >
+                  누적 {formatDiffSec(totalPaceDiffMs)}
+                </span>
               </div>
-            );
-          })}
+              <div className="text-3xl font-extrabold font-mono text-white tracking-tight tabular-nums">
+                {formatStopwatch(realElapsedMs)}
+              </div>
+            </div>
+
+            {/* 문장별 계획 대비 증감 테이블 */}
+            <div className="flex-1 overflow-y-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="sticky top-0 z-10 bg-zinc-900 text-zinc-400 border-b border-zinc-800 text-[11px]">
+                  <tr>
+                    <th className="py-2 px-2.5 font-medium w-8">#</th>
+                    <th className="py-2 px-1.5 font-medium">문장</th>
+                    <th className="py-2 px-1.5 font-medium text-right w-12">계획</th>
+                    <th className="py-2 px-2.5 font-medium text-right w-14">증감</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900 font-mono">
+                  {parsed.flatLines.map((line, idx) => {
+                    const actualMs = lineActualDurationsMs[idx];
+                    const hasStarted = actualMs !== undefined;
+                    const isCurrent = idx === currentIndex;
+                    const diffMs = hasStarted ? actualMs - line.durationMs : 0;
+
+                    return (
+                      <tr
+                        key={line.id}
+                        ref={(el) => {
+                          tableRowRefs.current[idx] = el;
+                        }}
+                        onClick={() => jumpToLine(idx)}
+                        className={`cursor-pointer transition-colors ${
+                          isCurrent
+                            ? 'bg-zinc-800 text-white'
+                            : hasStarted
+                            ? 'text-zinc-300 hover:bg-zinc-900'
+                            : 'text-zinc-500 hover:bg-zinc-900/50'
+                        }`}
+                      >
+                        <td className="py-2 px-2.5 text-[11px] text-zinc-500">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2 px-1.5 font-sans truncate max-w-[115px]">
+                          {line.text}
+                        </td>
+                        <td className="py-2 px-1.5 text-right text-zinc-400 tabular-nums">
+                          {(line.durationMs / 1000).toFixed(1)}s
+                        </td>
+                        <td
+                          className={`py-2 px-2.5 text-right font-bold tabular-nums ${
+                            !hasStarted
+                              ? 'text-zinc-600'
+                              : diffMs > 50
+                              ? 'text-rose-400'
+                              : diffMs < -50
+                              ? 'text-sky-400'
+                              : 'text-emerald-400'
+                          }`}
+                        >
+                          {hasStarted ? formatDiffSec(diffMs) : '-'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </aside>
+        )}
+
+        {/* 우측 본문 스크롤 영역 */}
+        <div className="relative flex-1 overflow-hidden">
+          {/* 우측 상단 현재 문장 남은 초 대형 카운트다운 (숫자만 표기) */}
+          <div className="pointer-events-none absolute top-6 right-8 z-30">
+            <span className="text-white font-extrabold text-7xl md:text-8xl leading-none tracking-tight tabular-nums drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
+              {currentLineRemainingSec}
+            </span>
+          </div>
+
+          {/* 시선 고정 가이드라인 */}
+          <div className="pointer-events-none absolute inset-x-0 top-[35%] z-20 flex items-center justify-between px-4">
+            <div className="w-3 h-3 border-t-2 border-r-2 border-emerald-500 rotate-45" />
+            <div className="flex-1 border-t border-dashed border-zinc-800/80 mx-3" />
+            <div className="w-3 h-3 border-t-2 border-l-2 border-emerald-500 -rotate-45" />
+          </div>
+
+          {/* 본문 스크롤 스테이지 */}
+          <div
+            className={`relative w-full h-full px-8 pr-28 ${
+              config.isMirrored ? 'scale-x-[-1]' : ''
+            }`}
+          >
+            <div
+              style={{
+                transform: `translate3d(0, calc(35vh + ${translateY}px), 0)`,
+                fontSize: `${config.fontSizePx}px`,
+                lineHeight: config.lineHeight,
+              }}
+              className="will-change-transform transition-none max-w-4xl mx-auto"
+            >
+              {parsed.flatLines.map((line, idx) => {
+                const isCurrent = idx === currentIndex;
+                const isPast = idx < currentIndex;
+                const isNewParagraph = idx > 0 && line.lineIndexInParagraph === 0;
+
+                return (
+                  <div
+                    key={line.id}
+                    ref={(el) => {
+                      lineRefs.current[idx] = el;
+                    }}
+                    onClick={() => jumpToLine(idx)}
+                    className={`cursor-pointer transition-opacity duration-200 break-keep font-bold tracking-tight ${
+                      isNewParagraph ? 'mt-[1.4em]' : 'mt-[0.35em]'
+                    } ${
+                      isCurrent
+                        ? 'text-white opacity-100'
+                        : isPast
+                        ? 'text-zinc-500 opacity-30'
+                        : 'text-zinc-200 opacity-50 hover:opacity-80'
+                    }`}
+                  >
+                    {line.text}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     </div>
