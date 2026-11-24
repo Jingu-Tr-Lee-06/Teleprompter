@@ -121,10 +121,11 @@ export function useTeleprompter({
       setElapsedTotalMs((prev) => prev + deltaMs);
 
       if (currentLineElapsedRef.current >= targetDuration) {
-        // 슬라이드 제어 모드: 시간이 다 되어도 다음 줄로 넘어가지 않고 현재 문장 위치에 고정된 채 대기
+        // 슬라이드 제어 모드: 문장 끝까지 부드럽게 흐른 뒤, 마지막 위치(lineProgress = 1)에 고정된 채 정지
         if (controlMode === 'slide') {
-          setLineProgress(0); // 문장 위치가 아래로 밀리지 않도록 기준선에 정위치 고정
-          setIsPlaying(false); // 0초 상태로 멈춰서 다음 펜슬 클릭 대기
+          currentLineElapsedRef.current = targetDuration;
+          setLineProgress(1);
+          setIsPlaying(false);
           return;
         }
 

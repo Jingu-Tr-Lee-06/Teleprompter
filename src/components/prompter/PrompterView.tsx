@@ -74,38 +74,27 @@ export function PrompterView({
     onExitPrompter: onExit,
   });
 
-  // 현재 줄의 실제 픽셀 높이와 진행률(lineProgress)을 기반으로 Y축 이동 거리 계산
+  // 현재 줄의 실제 픽셀 높이와 진행률(lineProgress: 0 -> 1)에 따라 부드럽게 스크롤 이동
+  // slide 모드에서 lineProgress가 1에 도달해 멈추면 현재 문장 마지막 위치에 그대로 고정됨
   useEffect(() => {
     const activeEl = lineRefs.current[currentIndex];
     if (!activeEl) return;
 
     const offsetTop = activeEl.offsetTop;
     const height = activeEl.offsetHeight;
-    // 슬라이드 제어 모드에서는 대사가 기준선 위치에 딱 고정되도록 offsetTop만 반영
-    const smoothOffset =
-      config.controlMode === 'slide' ? offsetTop : offsetTop + height * lineProgress;
+    const smoothOffset = offsetTop + height * lineProgress;
     setTranslateY(-smoothOffset);
-  }, [currentIndex, lineProgress, config.controlMode, config.fontSizePx, parsed.flatLines]);
+  }, [currentIndex, lineProgress, config.fontSizePx, parsed.flatLines]);
 
   const activeLine = parsed.flatLines[currentIndex];
   const remainingTotalMs = Math.max(0, parsed.totalCalculatedMs - elapsedTotalMs);
 
-  // 슬라이드 제어 모드에서 현재 문장 시간이 다 되어 정지한 상태인지 판별
-  const isCurrentLineExpiredInSlideMode = useMemo(() => {
-    if (config.controlMode !== 'slide' || isPlaying || lineProgress !== 0) return false;
-    const precedingMs = parsed.flatLines
-      .slice(0, currentIndex)
-      .reduce((sum, l) => sum + l.durationMs, 0);
-    return elapsedTotalMs > precedingMs;
-  }, [config.controlMode, isPlaying, lineProgress, elapsedTotalMs, parsed.flatLines, currentIndex]);
-
-  // 현재 문장(줄)의 남은 초 (정수 올림, 숫자만 표기용)
+  // 현재 문장(줄)의 남은 초 (lineProgress가 1에 도달하면 정확히 0 표시)
   const currentLineRemainingSec = useMemo(() => {
     if (!activeLine) return 0;
-    if (isCurrentLineExpiredInSlideMode) return 0;
     const remMs = activeLine.durationMs * (1 - lineProgress);
     return Math.max(0, Math.ceil(remMs / 1000));
-  }, [activeLine, isCurrentLineExpiredInSlideMode, lineProgress]);
+  }, [activeLine, lineProgress]);
 
   // 현재 문단의 남은 시간 계산
   const currentParagraphRemainingMs = useMemo(() => {
@@ -114,14 +103,12 @@ export function PrompterView({
       (l) => l.paragraphIndex === activeLine.paragraphIndex
     );
     const currentIdxInPara = paraLines.findIndex((l) => l.id === activeLine.id);
-    const currentLineRem = isCurrentLineExpiredInSlideMode
-      ? 0
-      : activeLine.durationMs * (1 - lineProgress);
+    const currentLineRem = activeLine.durationMs * (1 - lineProgress);
     const followingLinesRem = paraLines
       .slice(currentIdxInPara + 1)
       .reduce((sum, l) => sum + l.durationMs, 0);
     return currentLineRem + followingLinesRem;
-  }, [activeLine, isCurrentLineExpiredInSlideMode, lineProgress, parsed.flatLines]);
+  }, [activeLine, lineProgress, parsed.flatLines]);
 
   // 블랙스크린(암전) 모드 렌더링
   if (isBlackout) {
