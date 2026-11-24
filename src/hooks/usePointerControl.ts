@@ -6,6 +6,8 @@ interface UsePointerControlProps {
   controlMode: ControlMode;
   onTogglePlay: () => void;
   onStartPlay: () => void;
+  onNextLine: () => void;
+  onPrevLine: () => void;
   onNextParagraph: () => void;
   onPrevParagraph: () => void;
   onAdjustFontSize: (deltaPx: number) => void;
@@ -17,6 +19,8 @@ export function usePointerControl({
   controlMode,
   onTogglePlay,
   onStartPlay,
+  onNextLine,
+  onPrevLine,
   onNextParagraph,
   onPrevParagraph,
   onAdjustFontSize,
@@ -24,7 +28,7 @@ export function usePointerControl({
 }: UsePointerControlProps) {
   const [isBlackout, setIsBlackout] = useState(false);
 
-  // 1. 발표 중 화면 절전(꺼짐) 방지 (Screen Wake Lock API)
+  // 1. 발표 중 화면 절전(꺼짐) 방지
   useEffect(() => {
     if (!isActive) return;
 
@@ -45,7 +49,7 @@ export function usePointerControl({
     };
   }, [isActive]);
 
-  // 2. 프리젠터 리모컨 + 갤럭시탭 S펜 에어 액션(키보드/미디어 키) 바인딩
+  // 2. 프리젠터 리모컨 + 갤럭시탭 S펜 버튼 바인딩
   useEffect(() => {
     if (!isActive) {
       setIsBlackout(false);
@@ -58,7 +62,8 @@ export function usePointerControl({
         return;
       }
       if (controlMode === 'slide') {
-        onNextParagraph();
+        // 슬라이드 제어 모드: 다음 문장(줄)으로 이동 후 해당 문장 카운트다운 시작
+        onNextLine();
         onStartPlay();
       } else {
         onTogglePlay();
@@ -70,9 +75,11 @@ export function usePointerControl({
         setIsBlackout(false);
         return;
       }
-      onPrevParagraph();
       if (controlMode === 'slide') {
+        onPrevLine();
         onStartPlay();
+      } else {
+        onPrevParagraph();
       }
     };
 
@@ -85,7 +92,7 @@ export function usePointerControl({
       }
 
       switch (e.key) {
-        // [리모컨 다음 버튼 + S펜 에어 액션(다음 페이지 / 미디어 재생·다음트랙)]
+        // [S펜 버튼 / 리모컨 다음 버튼] -> 문장 단위로 다음 이동
         case 'ArrowRight':
         case 'PageDown':
         case ' ':
@@ -97,7 +104,7 @@ export function usePointerControl({
           break;
         }
 
-        // [리모컨 이전 버튼 + S펜 에어 액션(이전 페이지 / 이전트랙)]
+        // [S펜 두 번 누르기 / 리모컨 이전 버튼] -> 문장 단위로 이전 이동
         case 'ArrowLeft':
         case 'PageUp':
         case 'MediaTrackPrevious': {
@@ -106,6 +113,7 @@ export function usePointerControl({
           break;
         }
 
+        // [키보드 위/아래 화살표는 문단 단위 빠른 점프 유지]
         case 'ArrowDown': {
           e.preventDefault();
           onNextParagraph();
@@ -146,7 +154,7 @@ export function usePointerControl({
       }
     };
 
-    // 3. S펜을 화면 근처에 대고(호버) 사이드 버튼을 직접 눌렀을 때 감지 (PointerEvent)
+    // S펜 호버 상태 사이드 버튼 직접 클릭 감지
     const handlePointerDown = (e: PointerEvent) => {
       if (e.pointerType === 'pen' && (e.button === 5 || e.buttons === 32)) {
         e.preventDefault();
@@ -167,6 +175,8 @@ export function usePointerControl({
     isBlackout,
     onTogglePlay,
     onStartPlay,
+    onNextLine,
+    onPrevLine,
     onNextParagraph,
     onPrevParagraph,
     onAdjustFontSize,

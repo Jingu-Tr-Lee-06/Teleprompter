@@ -14,14 +14,13 @@ export function useTeleprompter({
 }: UseTeleprompterProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [lineProgress, setLineProgress] = useState(0); // 현재 줄 내 진행률 (0.0 ~ 1.0)
+  const [lineProgress, setLineProgress] = useState(0);
   const [elapsedTotalMs, setElapsedTotalMs] = useState(0);
 
   const lastFrameTimeRef = useRef<number | null>(null);
   const currentLineElapsedRef = useRef<number>(0);
   const rafIdRef = useRef<number | null>(null);
 
-  // 대본이 변경되거나 처음부터 다시 시작할 때 초기화
   const reset = useCallback(() => {
     setIsPlaying(false);
     setCurrentIndex(0);
@@ -31,7 +30,6 @@ export function useTeleprompter({
     lastFrameTimeRef.current = null;
   }, []);
 
-  // 특정 줄 인덱스로 즉시 이동 (슬라이드성 제어 및 클릭 이동용)
   const jumpToLine = useCallback(
     (targetIndex: number) => {
       if (flatLines.length === 0) return;
@@ -41,7 +39,6 @@ export function useTeleprompter({
       currentLineElapsedRef.current = 0;
       lastFrameTimeRef.current = performance.now();
 
-      // 이전 줄들의 합산 시간을 계산해 전체 경과 시간 동기화
       const precedingMs = flatLines
         .slice(0, clamped)
         .reduce((sum, l) => sum + l.durationMs, 0);
@@ -49,6 +46,22 @@ export function useTeleprompter({
     },
     [flatLines]
   );
+
+  // 다음 문장(줄)으로 이동
+  const jumpToNextLine = useCallback(() => {
+    if (flatLines.length === 0) return;
+    jumpToLine(currentIndex + 1);
+  }, [flatLines.length, currentIndex, jumpToLine]);
+
+  // 이전 문장(줄)으로 이동 (현재 문장을 1초 이상 읽었으면 현재 문장 처음으로, 아니면 직전 문장으로)
+  const jumpToPrevLine = useCallback(() => {
+    if (flatLines.length === 0) return;
+    if (currentLineElapsedRef.current > 1000) {
+      jumpToLine(currentIndex);
+      return;
+    }
+    jumpToLine(currentIndex - 1);
+  }, [flatLines.length, currentIndex, jumpToLine]);
 
   // 다음 문단 첫 줄로 이동
   const jumpToNextParagraph = useCallback(() => {
@@ -64,13 +77,12 @@ export function useTeleprompter({
     }
   }, [flatLines, currentIndex, jumpToLine]);
 
-  // 이전 문단 첫 줄로 이동 (현재 문단 중간이면 현재 문단 처음으로, 처음이면 이전 문단으로)
+  // 이전 문단 첫 줄로 이동
   const jumpToPrevParagraph = useCallback(() => {
     if (flatLines.length === 0) return;
     const currentLine = flatLines[currentIndex];
     if (!currentLine) return;
 
-    // 현재 문단의 첫 줄이 아니거나, 첫 줄이라도 1초 이상 지났다면 현재 문단 처음으로 복귀
     if (currentLine.lineIndexInParagraph > 0 || currentLineElapsedRef.current > 1000) {
       const currentParaStart = flatLines.findIndex(
         (l) => l.paragraphIndex === currentLine.paragraphIndex
@@ -79,13 +91,11 @@ export function useTeleprompter({
       return;
     }
 
-    // 이미 문단 맨 앞이라면 직전 문단 첫 줄로 이동
     const prevParaIdx = Math.max(0, currentLine.paragraphIndex - 1);
     const prevParaStart = flatLines.findIndex((l) => l.paragraphIndex === prevParaIdx);
     jumpToLine(prevParaStart !== -1 ? prevParaStart : 0);
   }, [flatLines, currentIndex, jumpToLine]);
 
-  // requestAnimationFrame 루프
   useEffect(() => {
     if (!isPlaying || flatLines.length === 0) {
       lastFrameTimeRef.current = null;
@@ -111,7 +121,6 @@ export function useTeleprompter({
       setElapsedTotalMs((prev) => prev + deltaMs);
 
       if (currentLineElapsedRef.current >= targetDuration) {
-        // 슬라이드 모드일 때는 문단이 바뀌는 경계에서 자동 정지하여 포인터 입력을 대기
         const nextIdx = currentIndex + 1;
         if (nextIdx >= flatLines.length) {
           setLineProgress(1);
@@ -120,11 +129,8 @@ export function useTeleprompter({
           return;
         }
 
-        const isParagraphBoundary =
-          flatLines[nextIdx].paragraphIndex !== activeLine.paragraphIndex;
-
-        if (controlMode === 'slide' && isParagraphBoundary) {
-          // 문단 끝에 도달하면 다음 문단 첫 줄에 맞춰 세우고 일시정지 (포인터 다음 버튼 대기)
+        // 슬라이드 제어 모드: 한 문장(줄) 시간이 다 되면 다음 문장 위치에 맞춰 대기
+        if (controlMode === 'slide') {
           setCurrentIndex(nextIdx);
           setLineProgress(0);
           currentLineElapsedRef.current = 0;
@@ -132,11 +138,13 @@ export function useTeleprompter({
           return;
         }
 
-        // 연속 스크롤 모드이거나 같은 문단 내 줄바꿈이면 자연스럽게 다음 줄로 진행
+        // 연속 스크롤 모드: 자연스럽게 다음 줄로 이어서 스크롤
         const overflowMs = currentLineElapsedRef.current - targetDuration;
         setCurrentIndex(nextIdx);
         currentLineElapsedRef.current = overflowMs;
-        setLineProgress(Math.min(overflowMs / Math.max(flatLines[nextIdx].durationMs, 100), 1));
+        setLineProgress(
+          Math.min(overflowMs / Math.max(flatLines[nextIdx].durationMs, 100), 1)
+        );
       } else {
         setLineProgress(currentLineElapsedRef.current / targetDuration);
       }
@@ -163,6 +171,8 @@ export function useTeleprompter({
     elapsedTotalMs,
     reset,
     jumpToLine,
+    jumpToNextLine,
+    jumpToPrevLine,
     jumpToNextParagraph,
     jumpToPrevParagraph,
   };

@@ -49,6 +49,8 @@ export function PrompterView({
     elapsedTotalMs,
     reset,
     jumpToLine,
+    jumpToNextLine,
+    jumpToPrevLine,
     jumpToNextParagraph,
     jumpToPrevParagraph,
   } = useTeleprompter({
@@ -61,6 +63,8 @@ export function PrompterView({
     controlMode: config.controlMode,
     onTogglePlay: togglePlay,
     onStartPlay: () => setIsPlaying(true),
+    onNextLine: jumpToNextLine,
+    onPrevLine: jumpToPrevLine,
     onNextParagraph: jumpToNextParagraph,
     onPrevParagraph: jumpToPrevParagraph,
     onAdjustFontSize: (delta) =>
@@ -146,7 +150,7 @@ export function PrompterView({
           <button
             onClick={jumpToPrevParagraph}
             className="p-1.5 text-zinc-400 hover:text-white cursor-pointer"
-            title="이전 문단 (←)"
+            title="이전 문단 (↑)"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
@@ -156,7 +160,7 @@ export function PrompterView({
           <button
             onClick={jumpToNextParagraph}
             className="p-1.5 text-zinc-400 hover:text-white cursor-pointer"
-            title="다음 문단 (→)"
+            title="다음 문단 (↓)"
           >
             <ChevronRight className="w-5 h-5" />
           </button>
