@@ -21,10 +21,11 @@ const DEFAULT_SCRIPT = `{25s}
 발표용 무선 포인터의 다음/이전 버튼을 누르면 슬라이드처럼 문단 단위로 이동할 수도 있습니다.`;
 
 const DEFAULT_CONFIG: PrompterConfig = {
-  totalTargetDurationSec: 90, // 기본 1분 30초
+  totalTargetDurationSec: 90,
   fontSizePx: 52,
   lineHeight: 1.6,
-  controlMode: 'scroll',
+  controlMode: 'slide',
+  advanceTrigger: 'manual',
   isMirrored: false,
 };
 
