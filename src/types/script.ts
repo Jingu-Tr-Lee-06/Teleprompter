@@ -1,5 +1,4 @@
 export type ControlMode = 'scroll' | 'slide';
-export type AdvanceTrigger = 'manual' | 'voice' | 'snap' | 'voice+snap';
 
 export interface ScriptLine {
   id: string;
@@ -24,7 +23,6 @@ export interface PrompterConfig {
   fontSizePx: number;
   lineHeight: number;
   controlMode: ControlMode;
-  advanceTrigger: AdvanceTrigger; // 문장 넘김 트리거 방식 선택
   isMirrored: boolean;
 }
 

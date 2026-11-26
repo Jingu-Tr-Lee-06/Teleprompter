@@ -25,7 +25,6 @@ const DEFAULT_CONFIG: PrompterConfig = {
   fontSizePx: 52,
   lineHeight: 1.6,
   controlMode: 'slide',
-  advanceTrigger: 'manual',
   isMirrored: false,
 };
 
@@ -38,7 +37,6 @@ export default function HomePage() {
   const [paragraphTimes, setParagraphTimes] = useState<Record<number, number>>({});
   const [lineTimes, setLineTimes] = useState<Record<string, number>>({});
 
-  // 1. 초기 마운트 시 localStorage에서 이전 작업 복원
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -56,7 +54,6 @@ export default function HomePage() {
     }
   }, []);
 
-  // 2. 상태 변경 시 localStorage에 자동 저장
   useEffect(() => {
     if (!isLoaded) return;
     try {
@@ -74,7 +71,6 @@ export default function HomePage() {
     }
   }, [isLoaded, rawText, config, paragraphTimes, lineTimes]);
 
-  // 3. 대본 및 시간 설정이 바뀔 때마다 실시간으로 줄별 할당 시간 재계산
   const parsedScript = useMemo(() => {
     return parseAndCalculateScript(rawText, config.totalTargetDurationSec, {
       paragraphTimes,
@@ -115,7 +111,6 @@ export default function HomePage() {
     setLineTimes({});
   };
 
-  // 전체화면 진입과 동시에 프롬프터 뷰 열기
   const handleStartPrompter = async () => {
     setIsPrompterOpen(true);
     try {
@@ -123,11 +118,10 @@ export default function HomePage() {
         await document.documentElement.requestFullscreen();
       }
     } catch {
-      // 브라우저 정책상 전체화면 거부 시 일반 뷰포트 전체화면으로 동작
+      // 전체화면 거부 시 일반 뷰포트 전체화면으로 동작
     }
   };
 
-  // 프롬프터 종료 시 전체화면도 함께 해제
   const handleExitPrompter = async () => {
     setIsPrompterOpen(false);
     try {

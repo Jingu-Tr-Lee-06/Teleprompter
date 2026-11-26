@@ -9,9 +9,8 @@ import {
   Sliders,
   AlertTriangle,
   RotateCcw,
-  Mic,
 } from 'lucide-react';
-import { AdvanceTrigger, ParsedScriptResult, PrompterConfig } from '@/types/script';
+import { ParsedScriptResult, PrompterConfig } from '@/types/script';
 
 interface ScriptEditorProps {
   rawText: string;
@@ -52,13 +51,6 @@ export function ScriptEditor({
     onUpdateConfig({ totalTargetDurationSec: clampedMins * 60 + clampedSecs });
   };
 
-  const handleTriggerSelect = (nextTrigger: AdvanceTrigger) => {
-    onUpdateConfig({
-      advanceTrigger: nextTrigger,
-      controlMode: nextTrigger !== 'manual' ? 'slide' : config.controlMode,
-    });
-  };
-
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       {/* 상단 제어 바 */}
@@ -69,7 +61,7 @@ export function ScriptEditor({
         </div>
 
         {/* 핵심 설정 컨트롤러 */}
-        <div className="flex flex-wrap items-center gap-3 text-sm">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
           {/* 1. 전체 발표 시간 설정 */}
           <div className="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
             <Clock className="w-4 h-4 text-emerald-400" />
@@ -110,7 +102,7 @@ export function ScriptEditor({
             <span className="font-mono w-10 text-right">{config.fontSizePx}px</span>
           </div>
 
-          {/* 3. 스크롤 제어 모드 선택 */}
+          {/* 3. 포인터 제어 모드 선택 */}
           <div className="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
             <Sliders className="w-4 h-4 text-amber-400" />
             <select
@@ -122,21 +114,6 @@ export function ScriptEditor({
             >
               <option value="slide" className="bg-zinc-900">포인터 슬라이드 제어 모드</option>
               <option value="scroll" className="bg-zinc-900">연속 스크롤 모드</option>
-            </select>
-          </div>
-
-          {/* 4. 문장 넘김 방식 선택 (수동 / 음성 / 손가락 튕기기 / 음성+손가락) */}
-          <div className="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
-            <Mic className="w-4 h-4 text-rose-400" />
-            <select
-              value={config.advanceTrigger ?? 'manual'}
-              onChange={(e) => handleTriggerSelect(e.target.value as AdvanceTrigger)}
-              className="bg-transparent text-zinc-100 focus:outline-none cursor-pointer"
-            >
-              <option value="manual" className="bg-zinc-900">수동 넘김 (펜슬/키)</option>
-              <option value="voice" className="bg-zinc-900">음성 인식 넘김</option>
-              <option value="snap" className="bg-zinc-900">손가락 튕기기 (딱)</option>
-              <option value="voice+snap" className="bg-zinc-900">음성 + 손가락 동시</option>
             </select>
           </div>
 
@@ -210,7 +187,6 @@ export function ScriptEditor({
                 key={para.id}
                 className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-4 space-y-3"
               >
-                {/* 문단 헤더 및 문단 단위 시간 입력 */}
                 <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
                   <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
                     문단 {para.index + 1} (슬라이드 #{para.index + 1})
@@ -239,7 +215,6 @@ export function ScriptEditor({
                   </div>
                 </div>
 
-                {/* 문단 내 개별 줄 목록 및 줄 단위 시간 입력 */}
                 <div className="space-y-2">
                   {para.lines.map((line) => (
                     <div

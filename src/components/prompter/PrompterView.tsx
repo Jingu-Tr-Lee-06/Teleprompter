@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Play,
   Pause,
@@ -15,15 +15,10 @@ import {
   Timer,
   PanelLeftClose,
   PanelLeftOpen,
-  Mic,
-  Hand,
-  MousePointerClick,
 } from 'lucide-react';
-import { AdvanceTrigger, ParsedScriptResult, PrompterConfig } from '@/types/script';
+import { ParsedScriptResult, PrompterConfig } from '@/types/script';
 import { useTeleprompter } from '@/hooks/useTeleprompter';
 import { usePointerControl } from '@/hooks/usePointerControl';
-import { useVoiceControl } from '@/hooks/useVoiceControl';
-import { useSnapControl } from '@/hooks/useSnapControl';
 
 interface PrompterViewProps {
   parsed: ParsedScriptResult;
@@ -62,14 +57,9 @@ export function PrompterView({
 }: PrompterViewProps) {
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const tableRowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
+  const lastPointerTypeRef = useRef<string>('mouse');
   const [translateY, setTranslateY] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [snapSensitivity, setSnapSensitivity] = useState(6);
-  const [snapFlash, setSnapFlash] = useState(false);
-
-  const trigger: AdvanceTrigger = config.advanceTrigger ?? 'manual';
-  const isVoiceEnabled = trigger === 'voice' || trigger === 'voice+snap';
-  const isSnapEnabled = trigger === 'snap' || trigger === 'voice+snap';
 
   const {
     isPlaying,
@@ -91,12 +81,30 @@ export function PrompterView({
     controlMode: config.controlMode,
   });
 
+  // 아직 발표를 한 번도 시작하지 않은 초기 대기 상태 판별
+  const isWaitingFirstStart =
+    currentIndex === 0 && !isPlaying && realElapsedMs === 0 && lineProgress === 0;
+
+  // 다음 버튼 클릭 시: 초기 대기 상태면 1번 문장을 그대로 시작하고, 이미 시작된 후면 다음 문장으로 이동
+  const handleAdvanceOrFirstStart = useCallback(() => {
+    if (isWaitingFirstStart) {
+      setIsPlaying(true);
+      return;
+    }
+    jumpToNextLine();
+    setIsPlaying(true);
+  }, [isWaitingFirstStart, setIsPlaying, jumpToNextLine]);
+
   const { isBlackout, setIsBlackout } = usePointerControl({
     isActive: true,
     controlMode: config.controlMode,
     onTogglePlay: togglePlay,
     onStartPlay: () => setIsPlaying(true),
-    onNextLine: jumpToNextLine,
+    onNextLine: () => {
+      if (!isWaitingFirstStart) {
+        jumpToNextLine();
+      }
+    },
     onPrevLine: jumpToPrevLine,
     onNextParagraph: jumpToNextParagraph,
     onPrevParagraph: jumpToPrevParagraph,
@@ -106,48 +114,6 @@ export function PrompterView({
       }),
     onExitPrompter: onExit,
   });
-
-  // 1. 음성 인식 문장 넘김
-  const { isListening, lastHeardText, voiceError } = useVoiceControl({
-    isActive: true,
-    isVoiceEnabled,
-    flatLines: parsed.flatLines,
-    currentIndex,
-    onAdvanceNextLine: () => {
-      jumpToNextLine();
-      setIsPlaying(true);
-    },
-  });
-
-  // 2. 손가락 튕기기('딱') 소리 감지 문장 넘김
-  const { isListeningSnap, snapError, lastSnapTime } = useSnapControl({
-    isActive: true,
-    isSnapEnabled,
-    sensitivity: snapSensitivity,
-    onSnapDetected: () => {
-      jumpToNextLine();
-      setIsPlaying(true);
-    },
-  });
-
-  // 손가락 튕기기 감지 시 짧은 시각 피드백 애니메이션
-  useEffect(() => {
-    if (!lastSnapTime) return;
-    setSnapFlash(true);
-    const timer = setTimeout(() => setSnapFlash(false), 350);
-    return () => clearTimeout(timer);
-  }, [lastSnapTime]);
-
-  const handleTriggerChange = (nextTrigger: AdvanceTrigger) => {
-    onUpdateConfig({
-      advanceTrigger: nextTrigger,
-      // 자동 트리거 선택 시 문장 단위 슬라이드 제어 모드로 자동 전환
-      controlMode: nextTrigger !== 'manual' ? 'slide' : config.controlMode,
-    });
-    if (nextTrigger !== 'manual') {
-      setIsPlaying(true);
-    }
-  };
 
   useEffect(() => {
     const activeEl = lineRefs.current[currentIndex];
@@ -165,6 +131,34 @@ export function PrompterView({
       rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }, [currentIndex, isSidebarOpen]);
+
+  // 아이패드 애플펜슬 및 터치 화면 탭 제스처 핸들러
+  const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerTypeRef.current = e.pointerType;
+    if (e.pointerType === 'mouse') return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relativeX = e.clientX - rect.left;
+    const isLeftZone = relativeX < rect.width * 0.3;
+
+    if (config.controlMode === 'slide') {
+      if (isLeftZone) {
+        jumpToPrevLine();
+        setIsPlaying(true);
+      } else {
+        handleAdvanceOrFirstStart();
+      }
+    } else {
+      togglePlay();
+    }
+  };
+
+  // 마우스 클릭일 때만 특정 문장 직접 점프 허용
+  const handleLineClick = (idx: number) => {
+    if (lastPointerTypeRef.current !== 'mouse') return;
+    jumpToLine(idx);
+    setIsPlaying(true);
+  };
 
   const activeLine = parsed.flatLines[currentIndex];
   const remainingTotalMs = Math.max(0, parsed.totalCalculatedMs - elapsedTotalMs);
@@ -203,21 +197,20 @@ export function PrompterView({
     return (
       <div
         onClick={() => setIsBlackout(false)}
-        className="fixed inset-0 bg-black z-50 flex items-end justify-center pb-8 cursor-pointer select-none"
+        className="fixed inset-0 h-[100dvh] bg-black z-50 flex items-end justify-center pb-8 cursor-pointer select-none touch-manipulation"
       >
         <span className="text-zinc-800 text-xs">
-          블랙스크린 모드 (리모컨 버튼 또는 화면 클릭 시 복귀)
+          블랙스크린 모드 (리모컨 버튼 또는 화면 터치 시 복귀)
         </span>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-black text-white z-50 overflow-hidden select-none flex flex-col">
+    <div className="fixed inset-0 h-[100dvh] bg-black text-white z-50 overflow-hidden select-none touch-manipulation flex flex-col">
       {/* 상단 HUD 컨트롤 바 */}
-      <div className="relative z-50 flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-zinc-950 border-b border-zinc-800">
-        <div className="flex items-center gap-2">
-          {/* 좌측 초시계 테이블 열기/닫기 버튼 */}
+      <div className="relative z-50 flex items-center justify-between px-4 py-3 bg-zinc-950 border-b border-zinc-800">
+        <div className="flex items-center gap-2.5">
           <button
             onClick={() => setIsSidebarOpen((prev) => !prev)}
             className="p-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 rounded-md cursor-pointer border border-zinc-800"
@@ -238,58 +231,6 @@ export function PrompterView({
             <span>{isPlaying ? '일시정지' : '재생'}</span>
           </button>
 
-          {/* 문장 넘김 방식 선택기 (수동 / 음성 / 손가락 튕기기 / 음성+손가락) */}
-          <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-700 rounded-md px-2.5 py-1 text-xs">
-            {trigger === 'manual' && <MousePointerClick className="w-3.5 h-3.5 text-zinc-400" />}
-            {trigger === 'voice' && (
-              <Mic className={`w-3.5 h-3.5 ${isListening ? 'text-rose-400 animate-pulse' : 'text-zinc-400'}`} />
-            )}
-            {trigger === 'snap' && (
-              <Hand
-                className={`w-3.5 h-3.5 transition-transform ${
-                  snapFlash
-                    ? 'text-amber-300 scale-125'
-                    : isListeningSnap
-                    ? 'text-amber-400'
-                    : 'text-zinc-400'
-                }`}
-              />
-            )}
-            {trigger === 'voice+snap' && (
-              <div className="flex items-center gap-1">
-                <Mic className={`w-3.5 h-3.5 ${isListening ? 'text-rose-400 animate-pulse' : 'text-zinc-400'}`} />
-                <Hand className={`w-3.5 h-3.5 ${snapFlash ? 'text-amber-300 scale-125' : 'text-amber-400'}`} />
-              </div>
-            )}
-
-            <select
-              value={trigger}
-              onChange={(e) => handleTriggerChange(e.target.value as AdvanceTrigger)}
-              className="bg-transparent text-zinc-100 font-medium focus:outline-none cursor-pointer"
-            >
-              <option value="manual" className="bg-zinc-900">수동 넘김 (펜슬/키)</option>
-              <option value="voice" className="bg-zinc-900">음성 인식 넘김</option>
-              <option value="snap" className="bg-zinc-900">손가락 튕기기 (딱)</option>
-              <option value="voice+snap" className="bg-zinc-900">음성 + 손가락 동시</option>
-            </select>
-          </div>
-
-          {/* 손가락 튕기기 활성화 시 민감도 미세 조절 */}
-          {isSnapEnabled && (
-            <div className="hidden sm:flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-md px-2 py-1 text-[11px] text-zinc-400">
-              <span>감도</span>
-              <input
-                type="range"
-                min={1}
-                max={10}
-                value={snapSensitivity}
-                onChange={(e) => setSnapSensitivity(Number(e.target.value))}
-                className="w-16 accent-amber-400 cursor-pointer"
-              />
-              <span className="font-mono text-zinc-200 w-3">{snapSensitivity}</span>
-            </div>
-          )}
-
           <button
             onClick={reset}
             className="p-2 text-zinc-400 hover:text-white rounded-md cursor-pointer"
@@ -298,20 +239,26 @@ export function PrompterView({
             <RotateCcw className="w-4 h-4" />
           </button>
 
-          <div className="h-4 w-px bg-zinc-800 mx-0.5" />
+          <div className="h-4 w-px bg-zinc-800 mx-1" />
 
           <button
-            onClick={jumpToPrevParagraph}
+            onClick={() => {
+              jumpToPrevParagraph();
+              setIsPlaying(true);
+            }}
             className="p-1.5 text-zinc-400 hover:text-white cursor-pointer"
             title="이전 문단 (↑)"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
           <span className="text-xs font-mono text-zinc-300">
-            문단 {(activeLine?.paragraphIndex ?? 0) + 1}/{parsed.paragraphs.length}
+            문단 {(activeLine?.paragraphIndex ?? 0) + 1} / {parsed.paragraphs.length}
           </span>
           <button
-            onClick={jumpToNextParagraph}
+            onClick={() => {
+              jumpToNextParagraph();
+              setIsPlaying(true);
+            }}
             className="p-1.5 text-zinc-400 hover:text-white cursor-pointer"
             title="다음 문단 (↓)"
           >
@@ -320,7 +267,7 @@ export function PrompterView({
         </div>
 
         {/* 중앙 타이머 디스플레이 */}
-        <div className="flex items-center gap-5 font-mono">
+        <div className="flex items-center gap-6 font-mono">
           <div className="text-center">
             <span className="text-[10px] text-zinc-500 block">현재 문단 남은 시간</span>
             <span className="text-lg font-bold text-amber-400">
@@ -379,7 +326,7 @@ export function PrompterView({
 
           <button
             onClick={onExit}
-            className="ml-1 flex items-center gap-1 bg-zinc-900 hover:bg-red-950/70 text-zinc-300 hover:text-red-300 px-3 py-1.5 rounded-md text-xs cursor-pointer"
+            className="ml-2 flex items-center gap-1 bg-zinc-900 hover:bg-red-950/70 text-zinc-300 hover:text-red-300 px-3 py-1.5 rounded-md text-xs cursor-pointer"
           >
             <X className="w-4 h-4" />
             <span>에디터 (ESC)</span>
@@ -389,9 +336,8 @@ export function PrompterView({
 
       {/* 메인 바디 영역 (좌측 초시계 패널 + 우측 본문 스테이지) */}
       <div className="relative flex-1 flex overflow-hidden">
-        {/* 좌측 패널: 발표 초시계 & 문장별 계획 대비 증감 시간 테이블 */}
         {isSidebarOpen && (
-          <aside className="relative z-40 w-72 shrink-0 h-full bg-zinc-950 border-r border-zinc-800 flex flex-col">
+          <aside className="relative z-40 w-64 md:w-72 shrink-0 h-full bg-zinc-950 border-r border-zinc-800 flex flex-col">
             <div className="p-4 border-b border-zinc-800 bg-zinc-900/80">
               <div className="flex items-center justify-between text-xs text-zinc-400 mb-1">
                 <span className="flex items-center gap-1.5 font-medium text-zinc-300">
@@ -438,7 +384,10 @@ export function PrompterView({
                         ref={(el) => {
                           tableRowRefs.current[idx] = el;
                         }}
-                        onClick={() => jumpToLine(idx)}
+                        onClick={() => {
+                          jumpToLine(idx);
+                          setIsPlaying(true);
+                        }}
                         className={`cursor-pointer transition-colors ${
                           isCurrent
                             ? 'bg-zinc-800 text-white'
@@ -450,7 +399,7 @@ export function PrompterView({
                         <td className="py-2 px-2.5 text-[11px] text-zinc-500">
                           {idx + 1}
                         </td>
-                        <td className="py-2 px-1.5 font-sans truncate max-w-[115px]">
+                        <td className="py-2 px-1.5 font-sans truncate max-w-[105px]">
                           {line.text}
                         </td>
                         <td className="py-2 px-1.5 text-right text-zinc-400 tabular-nums">
@@ -479,22 +428,22 @@ export function PrompterView({
         )}
 
         {/* 우측 본문 스크롤 영역 */}
-        <div className="relative flex-1 overflow-hidden">
-          {/* 우측 상단 현재 문장 남은 초 대형 카운트다운 */}
+        <div
+          onPointerDown={handleStagePointerDown}
+          className="relative flex-1 overflow-hidden touch-manipulation"
+        >
           <div className="pointer-events-none absolute top-6 right-8 z-30">
             <span className="text-white font-extrabold text-7xl md:text-8xl leading-none tracking-tight tabular-nums drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
               {currentLineRemainingSec}
             </span>
           </div>
 
-          {/* 시선 고정 가이드라인 */}
           <div className="pointer-events-none absolute inset-x-0 top-[35%] z-20 flex items-center justify-between px-4">
             <div className="w-3 h-3 border-t-2 border-r-2 border-emerald-500 rotate-45" />
             <div className="flex-1 border-t border-dashed border-zinc-800/80 mx-3" />
             <div className="w-3 h-3 border-t-2 border-l-2 border-emerald-500 -rotate-45" />
           </div>
 
-          {/* 본문 스크롤 스테이지 */}
           <div
             className={`relative w-full h-full px-8 pr-28 ${
               config.isMirrored ? 'scale-x-[-1]' : ''
@@ -519,7 +468,7 @@ export function PrompterView({
                     ref={(el) => {
                       lineRefs.current[idx] = el;
                     }}
-                    onClick={() => jumpToLine(idx)}
+                    onClick={() => handleLineClick(idx)}
                     className={`cursor-pointer transition-opacity duration-200 break-keep font-bold tracking-tight ${
                       isNewParagraph ? 'mt-[1.4em]' : 'mt-[0.35em]'
                     } ${
@@ -536,59 +485,6 @@ export function PrompterView({
               })}
             </div>
           </div>
-
-          {/* 하단 실시간 음성/손가락 감지 상태 모니터 바 */}
-          {(isVoiceEnabled || isSnapEnabled) && (
-            <div className="pointer-events-none absolute bottom-5 inset-x-8 z-30 flex justify-center">
-              <div
-                className={`border px-4 py-2 rounded-full flex items-center gap-3 max-w-2xl shadow-lg transition-colors ${
-                  snapFlash
-                    ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                    : 'bg-zinc-900/90 border-zinc-800 text-zinc-300'
-                }`}
-              >
-                {isVoiceEnabled && (
-                  <span className="flex items-center gap-1.5 text-xs">
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${
-                        isListening ? 'bg-rose-500 animate-ping' : 'bg-zinc-500'
-                      }`}
-                    />
-                    <span className="truncate max-w-md">
-                      {voiceError
-                        ? voiceError
-                        : lastHeardText || '말끝 인식 대기 중...'}
-                    </span>
-                  </span>
-                )}
-
-                {isVoiceEnabled && isSnapEnabled && (
-                  <span className="text-zinc-700">|</span>
-                )}
-
-                {isSnapEnabled && (
-                  <span className="flex items-center gap-1.5 text-xs shrink-0">
-                    <Hand
-                      className={`w-3.5 h-3.5 ${
-                        snapFlash
-                          ? 'text-amber-300'
-                          : isListeningSnap
-                          ? 'text-amber-400'
-                          : 'text-zinc-500'
-                      }`}
-                    />
-                    <span>
-                      {snapError
-                        ? snapError
-                        : snapFlash
-                        ? '손가락 소리 감지됨!'
-                        : '손가락 튕기기(딱) 대기 중'}
-                    </span>
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -175,11 +175,15 @@ export function useTeleprompter({
       setElapsedTotalMs((prev) => prev + deltaMs);
 
       if (currentLineElapsedRef.current >= targetDuration) {
-        // 슬라이드 제어 모드: 문장 끝에 도달하면 정지(초시계는 계속 흐름)
+        // 슬라이드 제어 모드: 문장 끝에 도달하면 정지(중간 문장은 초시계 유지, 마지막 문장이면 초시계도 종료)
         if (controlMode === 'slide') {
           currentLineElapsedRef.current = targetDuration;
           setLineProgress(1);
           setIsPlaying(false);
+          if (currentIndex >= flatLines.length - 1) {
+            setIsClockRunning(false);
+            onFinish?.();
+          }
           return;
         }
 
